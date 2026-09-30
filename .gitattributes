@@ -1,0 +1,8 @@
+# Enforce standard line endings for execution scripts
+*.sh text eol=lf
+
+# Auto-detect text files and apply normalization
+* text=auto
+
+# Ensure lock files are marked as binary or generated code
+Cargo.lock linguist-generated=true

@@ -1,0 +1,39 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Build and Test Workspace
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Source Code
+      uses: actions/checkout@v4
+
+    # 1. High-efficiency Rust compiler cache
+    - name: Set up Rust Cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: "reinforcement_learning"
+
+    # 2. Setup Python environment and cache pip packages
+    - name: Install Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+
+    # 3. Replicate your local virtual environment structure exactly
+    - name: Install Monorepo Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r reinforcement_learning/python/requirements.txt
+
+    # 4. Execute test suites across your entire workspace
+    - name: Run Workspace Tests
+      run: cargo test --workspace --verbose

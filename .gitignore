@@ -1,0 +1,18 @@
+# --- Rust Caches ---
+/target/
+**/*.rs.bk
+
+# --- Python Caches ---
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# --- DevOps & OS Caches ---
+.DS_Store
+.env
