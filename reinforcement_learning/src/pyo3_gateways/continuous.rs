@@ -4,6 +4,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 use ndarray::Array1;
 use crate::core::environment::Environment;
+use super::GatewayError;
 
 /// A type-safe wrapper around a dynamic Python Gymnasium environment
 /// configured for continuous vector observations and discrete actions.
@@ -13,15 +14,11 @@ pub struct PyO3ContinuousEnvironment {
 
 impl PyO3ContinuousEnvironment {
     /// Creates a new continuous observation environment instance.
-    pub fn new(env_name: &str, kwargs: Option<&Bound<'_, PyDict>>) -> Self {
+    pub fn new(env_name: &str, kwargs: Option<&Bound<'_, PyDict>>) -> Result<Self, GatewayError> {
         Python::with_gil(|py| {
-            let gym = py.import("gymnasium")
-                .expect("FAIL: Failed to import Python 'gymnasium' package. Is your .venv active?");
-                
-            let env = gym.call_method("make", (env_name,), kwargs)
-                .expect("FAIL: Failed to call gymnasium.make() over the FFI boundary");
-                
-            Self { gym_env: env.into() }
+            let gym = py.import("gymnasium")?;
+            let env = gym.call_method("make", (env_name,), kwargs)?;
+            Ok(Self { gym_env: env.into() })
         })
     }
 
@@ -34,41 +31,50 @@ impl PyO3ContinuousEnvironment {
 impl Environment for PyO3ContinuousEnvironment {
     type Observation = Array1<f64>;
     type Action = usize;
+    type Error = GatewayError;
 
-    fn reset(&mut self) -> Self::Observation {
+    fn reset(&mut self, seed: Option<u64>) -> Result<Self::Observation, Self::Error> {
         Python::with_gil(|py| {
-            let result = self.gym_env.call_method0(py, "reset")
-                .expect("FAIL: env.reset() execution threw an exception");
-                
-            // Bind the owned PyObject to the GIL, then downcast it to a PyTuple
-            let tuple = result.bind(py).downcast::<PyTuple>()
-                .expect("FAIL: env.reset() did not return a standard (obs, info) tuple");
+            let env = self.gym_env.bind(py);
             
-            let raw_vec: Vec<f64> = tuple.get_item(0).unwrap().extract()
-                .expect("FAIL: Could not extract continuous observation space to Vec<f64>");
+            // Build reset kwargs if a seed is provided
+            let result = if let Some(s) = seed {
+                let kwargs = PyDict::new(py);
+                kwargs.set_item("seed", s)?;
+                env.call_method("reset", (), Some(&kwargs))?
+            } else {
+                env.call_method0("reset")?
+            };
+            
+            let tuple = result.downcast::<PyTuple>()
+                .map_err(|e| GatewayError::StructureMismatch(format!("reset() did not return tuple: {e}")))?;
+            
+            let raw_vec: Vec<f64> = tuple.get_item(0)?
+                .extract()
+                .map_err(|e| GatewayError::StructureMismatch(format!("Failed to extract Vec<f64>: {e}")))?;
                 
-            Array1::from_vec(raw_vec)
+            Ok(Array1::from_vec(raw_vec))
         })
     }
 
-    fn step(&mut self, action: Self::Action) -> (Self::Observation, f64, bool, bool) {
+    fn step(&mut self, action: Self::Action) -> Result<(Self::Observation, f64, bool, bool), Self::Error> {
         Python::with_gil(|py| {
-            let result = self.gym_env.call_method1(py, "step", (action,))
-                .expect("FAIL: env.step() execution threw an exception");
-                
-            // Apply the same bind and downcast chain here
-            let tuple = result.bind(py).downcast::<PyTuple>()
-                .expect("FAIL: env.step() response layout structure is invalid");
+            let env = self.gym_env.bind(py);
+            let result = env.call_method1("step", (action,))?;
             
-            let raw_vec: Vec<f64> = tuple.get_item(0).unwrap().extract()
-                .expect("FAIL: Could not extract next continuous observation space to Vec<f64>");
+            let tuple = result.downcast::<PyTuple>()
+                .map_err(|e| GatewayError::StructureMismatch(format!("step() did not return tuple: {e}")))?;
+            
+            let raw_vec: Vec<f64> = tuple.get_item(0)?
+                .extract()
+                .map_err(|e| GatewayError::StructureMismatch(format!("Failed to extract next obs: {e}")))?;
             let obs = Array1::from_vec(raw_vec);
             
-            let reward: f64 = tuple.get_item(1).unwrap().extract().unwrap();
-            let terminated: bool = tuple.get_item(2).unwrap().extract().unwrap();
-            let truncated: bool = tuple.get_item(3).unwrap().extract().unwrap();
+            let reward: f64 = tuple.get_item(1)?.extract()?;
+            let terminated: bool = tuple.get_item(2)?.extract()?;
+            let truncated: bool = tuple.get_item(3)?.extract()?;
             
-            (obs, reward, terminated, truncated)
+            Ok((obs, reward, terminated, truncated))
         })
     }
 }
